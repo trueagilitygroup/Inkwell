@@ -1,0 +1,921 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Inkwell — Fill & Sign</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+:root{
+  --ink:#181b22;
+  --ink-2:#565b66;
+  --ink-3:#8b8f99;
+  --desk:#e8eaee;
+  --paper:#ffffff;
+  --pen:#2438c4;          /* signature-ink blue: the app's one accent */
+  --pen-deep:#1a2a9d;
+  --pen-soft:#e9ecfb;
+  --line:#d7dae1;
+  --danger:#b3261e;
+  --r:10px;
+  --mono:ui-monospace,"SF Mono","Cascadia Code",Menlo,Consolas,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --shadow-page:0 1px 2px rgba(24,27,34,.08),0 8px 28px rgba(24,27,34,.10);
+  --shadow-pop:0 4px 12px rgba(24,27,34,.14),0 16px 48px rgba(24,27,34,.18);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:var(--sans);color:var(--ink);background:var(--desk);overflow:hidden}
+button{font-family:inherit;cursor:pointer}
+:focus-visible{outline:2px solid var(--pen);outline-offset:2px}
+
+/* ---------- Toolbar ---------- */
+.topbar{
+  display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  padding:10px 16px;background:var(--paper);border-bottom:1px solid var(--line);
+  position:relative;z-index:30;
+}
+.brand{display:flex;align-items:center;gap:9px;user-select:none;margin-right:2px}
+.brand svg{display:block}
+.brand b{font-size:16px;font-weight:700;letter-spacing:.06em}
+.brand span{font-family:var(--mono);font-size:10px;letter-spacing:.14em;color:var(--ink-3);text-transform:uppercase;margin-top:3px}
+.tb-sep{width:1px;height:26px;background:var(--line)}
+.tools{display:flex;gap:4px;background:#f2f3f6;border:1px solid var(--line);border-radius:var(--r);padding:3px}
+.tool{
+  display:flex;align-items:center;gap:7px;border:0;background:transparent;color:var(--ink-2);
+  font-size:13px;font-weight:600;padding:7px 12px;border-radius:7px;transition:background .12s,color .12s;
+}
+.tool svg{flex:none}
+.tool:hover{background:#e7e9ee;color:var(--ink)}
+.tool.on{background:var(--ink);color:#fff}
+.tool.on svg *{stroke:#fff}
+.kbd{font-family:var(--mono);font-size:10px;color:var(--ink-3);border:1px solid var(--line);border-radius:4px;padding:0 4px;margin-left:2px}
+.tool.on .kbd{color:#cfd4ff;border-color:#3d4a66}
+.zoombox{display:flex;align-items:center;gap:2px;border:1px solid var(--line);border-radius:var(--r);padding:2px}
+.zoombox button{border:0;background:transparent;width:30px;height:30px;border-radius:7px;font-size:15px;color:var(--ink-2)}
+.zoombox button:hover{background:#f0f1f5;color:var(--ink)}
+.zoomval{font-family:var(--mono);font-size:12px;min-width:48px;text-align:center;color:var(--ink-2)}
+.spacer{flex:1}
+.filetag{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:12px;color:var(--ink-2);min-width:0}
+.filetag .dot{width:7px;height:7px;border-radius:50%;background:var(--pen);flex:none}
+.filetag .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}
+.btn{
+  border:1px solid var(--line);background:var(--paper);color:var(--ink);
+  font-size:13px;font-weight:600;padding:8px 14px;border-radius:var(--r);
+  display:inline-flex;align-items:center;gap:7px;transition:background .12s,border-color .12s;
+}
+.btn:hover{background:#f5f6f9}
+.btn.primary{background:var(--pen);border-color:var(--pen);color:#fff}
+.btn.primary:hover{background:var(--pen-deep)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+
+/* ---------- Workspace ---------- */
+.workspace{position:relative;height:calc(100% - 57px);overflow:auto;scroll-behavior:smooth}
+.deskpad{display:flex;flex-direction:column;align-items:center;gap:34px;padding:44px 24px 120px;min-height:100%}
+.workspace.dragging::after{
+  content:"Drop to open";position:fixed;inset:57px 0 0 0;display:flex;align-items:center;justify-content:center;
+  background:rgba(36,56,196,.08);border:3px dashed var(--pen);font-size:20px;font-weight:700;color:var(--pen);
+  z-index:40;pointer-events:none;
+}
+
+/* Empty state */
+.empty{margin:auto;text-align:center;max-width:520px;padding:24px}
+.dropcard{
+  background:var(--paper);border:1.5px dashed var(--ink-3);border-radius:18px;
+  padding:56px 44px 46px;box-shadow:var(--shadow-page);transition:border-color .15s, transform .15s;
+}
+.dropcard:hover{border-color:var(--pen)}
+.empty h1{font-size:26px;font-weight:800;letter-spacing:-.01em;margin:20px 0 8px}
+.empty p{color:var(--ink-2);font-size:14.5px;line-height:1.55}
+.empty .fmts{font-family:var(--mono);font-size:11px;letter-spacing:.12em;color:var(--ink-3);text-transform:uppercase;margin-top:14px}
+.empty .actions{display:flex;gap:10px;justify-content:center;margin-top:26px;flex-wrap:wrap}
+
+/* Pages */
+.pageSizer{position:relative;flex:none}
+.page{
+  position:absolute;top:0;left:0;transform-origin:top left;background:var(--paper);
+  box-shadow:var(--shadow-page);border-radius:2px;
+}
+.page canvas.base{display:block;border-radius:2px}
+.overlay{position:absolute;inset:0;z-index:2}
+.pageno{
+  position:absolute;left:0;top:-24px;font-family:var(--mono);font-size:11px;
+  letter-spacing:.12em;color:var(--ink-3);
+}
+.workspace[data-tool="text"] .overlay{cursor:text}
+.workspace[data-tool="sign"] .overlay{cursor:copy}
+.workspace[data-tool="place"] .overlay{cursor:copy}
+
+/* ---------- Fields ---------- */
+.field{position:absolute;z-index:3;border:1.5px solid transparent;border-radius:4px;touch-action:none}
+.field:hover{border-color:rgba(36,56,196,.45)}
+.field.sel{border-color:var(--pen)}
+.field.text{min-width:36px;min-height:26px;background:transparent}
+.field.text .fx{
+  font-family:var(--sans);line-height:1.35;padding:3px 4px;min-width:28px;min-height:20px;
+  white-space:pre-wrap;word-break:break-word;outline:none;cursor:inherit;
+}
+.field.text:not(.editing) .fx{pointer-events:none;user-select:none}
+.field.text.editing{cursor:text;border-color:var(--pen);background:rgba(255,255,255,.65)}
+.field:not(.editing){cursor:grab}
+.field.dragging{cursor:grabbing}
+.field.text .fx:empty::before{content:attr(data-ph);color:var(--ink-3)}
+.field.detected{border:1.5px dashed var(--pen);background:var(--pen-soft);animation:inkpulse 1.6s ease-in-out 2}
+@keyframes inkpulse{0%,100%{box-shadow:0 0 0 0 rgba(36,56,196,0)}50%{box-shadow:0 0 0 5px rgba(36,56,196,.18)}}
+@media (prefers-reduced-motion:reduce){.field.detected{animation:none}}
+.field.sig img{display:block;width:100%;height:100%;pointer-events:none;user-select:none}
+
+.fdel{
+  position:absolute;top:-11px;right:-11px;width:21px;height:21px;border-radius:50%;
+  background:var(--ink);color:#fff;border:2px solid #fff;font-size:12px;line-height:1;
+  display:none;align-items:center;justify-content:center;z-index:5;
+}
+.fdel:hover{background:var(--danger)}
+.field.sel .fdel,.field:hover .fdel{display:flex}
+.rz{
+  position:absolute;right:-7px;bottom:-7px;width:14px;height:14px;border-radius:50%;
+  background:#fff;border:2px solid var(--pen);cursor:nwse-resize;display:none;z-index:5;
+}
+.field.sel .rz{display:block}
+.fbar{
+  position:absolute;top:-38px;left:-2px;display:none;gap:2px;align-items:center;
+  background:var(--ink);border-radius:8px;padding:3px;box-shadow:var(--shadow-pop);z-index:6;white-space:nowrap;
+}
+.field.sel .fbar{display:flex}
+.fbar button{border:0;background:transparent;color:#e6e8ef;font-size:12px;font-weight:700;width:26px;height:26px;border-radius:6px}
+.fbar button:hover{background:#333a48}
+.fbar .sw{width:14px;height:14px;border-radius:50%;margin:0 auto;border:2px solid #fff}
+.fbar .sw.blue{background:var(--pen)}
+.fbar .sw.black{background:#181b22}
+.fbar button.act{background:#3d4a66}
+
+/* ---------- Modal ---------- */
+.veil{position:fixed;inset:0;background:rgba(24,27,34,.45);display:none;align-items:center;justify-content:center;z-index:100;padding:18px}
+.veil.open{display:flex}
+.modal{background:var(--paper);border-radius:16px;box-shadow:var(--shadow-pop);width:640px;max-width:100%;overflow:hidden}
+.modal header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--line)}
+.modal header h2{font-size:16px;font-weight:800;letter-spacing:-.01em}
+.mclose{border:0;background:transparent;font-size:20px;color:var(--ink-3);width:32px;height:32px;border-radius:8px}
+.mclose:hover{background:#f0f1f5;color:var(--ink)}
+.mtabs{display:flex;gap:4px;padding:12px 20px 0}
+.mtab{border:0;background:transparent;font-size:13px;font-weight:700;color:var(--ink-3);padding:8px 14px;border-radius:8px 8px 0 0;border-bottom:2px solid transparent}
+.mtab.on{color:var(--pen);border-bottom-color:var(--pen)}
+.mbody{padding:18px 20px 20px}
+.sigwrap{position:relative;border:1.5px solid var(--line);border-radius:12px;background:repeating-linear-gradient(#fff,#fff 54px,#eef0f4 55px,#fff 56px)}
+.sigwrap canvas{display:block;width:100%;height:200px;touch-action:none;border-radius:12px}
+.sigline{position:absolute;left:24px;right:24px;bottom:44px;border-bottom:1.5px solid var(--line);pointer-events:none}
+.sighint{position:absolute;left:24px;bottom:20px;font-family:var(--mono);font-size:10px;letter-spacing:.14em;color:var(--ink-3);text-transform:uppercase;pointer-events:none}
+.mrow{display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap}
+.inkpick{display:flex;gap:8px;align-items:center;margin-right:auto}
+.inkpick span{font-family:var(--mono);font-size:10px;letter-spacing:.12em;color:var(--ink-3);text-transform:uppercase}
+.inkdot{width:24px;height:24px;border-radius:50%;border:2px solid transparent;padding:0}
+.inkdot.blue{background:var(--pen)}
+.inkdot.black{background:#181b22}
+.inkdot.on{border-color:#fff;box-shadow:0 0 0 2px var(--pen)}
+#typePane{display:none}
+#typePane input[type=text]{
+  width:100%;font-size:15px;padding:11px 13px;border:1.5px solid var(--line);border-radius:10px;font-family:inherit;
+}
+#typePane input[type=text]:focus{border-color:var(--pen);outline:none}
+.fontopts{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-top:12px}
+.fontopt{border:1.5px solid var(--line);border-radius:10px;background:#fff;padding:12px;font-size:24px;color:var(--pen);min-height:64px;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.fontopt.on{border-color:var(--pen);background:var(--pen-soft)}
+
+/* ---------- Toast ---------- */
+.toasts{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;gap:8px;z-index:200;align-items:center}
+.toast{
+  background:var(--ink);color:#fff;font-size:13px;font-weight:600;padding:10px 16px;border-radius:99px;
+  box-shadow:var(--shadow-pop);display:flex;gap:8px;align-items:center;animation:tin .18s ease-out;
+}
+.toast .tdot{width:7px;height:7px;border-radius:50%;background:#7f8dff}
+@keyframes tin{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.toast{animation:none}}
+
+.hiddenfile{display:none}
+#docxStage{position:absolute;left:-99999px;top:0;width:794px;background:#fff;padding:64px 68px;font-family:Georgia,'Times New Roman',serif;font-size:15px;line-height:1.6;color:#1c1c1c}
+#docxStage h1,#docxStage h2,#docxStage h3{margin:.7em 0 .35em;line-height:1.25}
+#docxStage p{margin:.45em 0}
+#docxStage table{border-collapse:collapse;width:100%}
+#docxStage td,#docxStage th{border:1px solid #999;padding:5px 8px}
+@media (max-width:760px){
+  .brand span{display:none}
+  .tool .lbl,.kbd{display:none}
+  .tool{padding:7px 10px}
+  .filetag{display:none}
+}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand" title="Inkwell">
+    <svg width="26" height="26" viewBox="0 0 26 26" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M13 2 L19 12 L13 21 L7 12 Z" fill="#2438c4"/>
+      <circle cx="13" cy="12.5" r="2" fill="#fff"/>
+      <path d="M13 21 L13 24" stroke="#181b22" stroke-width="2" stroke-linecap="round"/>
+    </svg>
+    <div><b>Inkwell</b><br><span>fill &amp; sign</span></div>
+  </div>
+  <div class="tb-sep"></div>
+  <div class="tools" role="toolbar" aria-label="Editing tools">
+    <button class="tool on" data-tool="select" title="Select and move (V)">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M5 3l14 8-6.5 1.5L9 19 5 3z" stroke="#565b66" stroke-width="2" stroke-linejoin="round"/></svg>
+      <span class="lbl">Select</span><span class="kbd">V</span>
+    </button>
+    <button class="tool" data-tool="text" title="Add text (T)">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M5 5h14M12 5v14" stroke="#565b66" stroke-width="2" stroke-linecap="round"/></svg>
+      <span class="lbl">Text</span><span class="kbd">T</span>
+    </button>
+    <button class="tool" data-tool="sign" title="Place signature (S)">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M3 17c3-6 5-9 6-7s-1 7 1 7 3-5 5-5 1 5 6 3" stroke="#565b66" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span class="lbl">Sign</span><span class="kbd">S</span>
+    </button>
+    <button class="tool" data-tool="detect" title="Detect blank fields (D)" id="detectBtn">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="3" y="7" width="18" height="10" rx="2" stroke="#565b66" stroke-width="2" stroke-dasharray="3 3"/><path d="M7 14h7" stroke="#565b66" stroke-width="2" stroke-linecap="round"/></svg>
+      <span class="lbl">Detect fields</span><span class="kbd">D</span>
+    </button>
+  </div>
+  <div class="zoombox" aria-label="Zoom">
+    <button id="zoomOut" title="Zoom out">−</button>
+    <div class="zoomval" id="zoomVal">100%</div>
+    <button id="zoomIn" title="Zoom in">+</button>
+    <button id="zoomFit" title="Fit width" style="width:auto;padding:0 9px;font-size:11px;font-family:var(--mono)">FIT</button>
+  </div>
+  <div class="spacer"></div>
+  <div class="filetag" id="fileTag" hidden><span class="dot"></span><span class="nm" id="fileName"></span><span id="fileMeta"></span></div>
+  <button class="btn" id="newBtn" hidden>New file</button>
+  <button class="btn" id="pngBtn" hidden title="Download flattened PNG of each page">PNG</button>
+  <button class="btn primary" id="pdfBtn" hidden>
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M12 3v12m0 0l-4.5-4.5M12 15l4.5-4.5M4 20h16" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    Download PDF
+  </button>
+</div>
+
+<div class="workspace" id="ws" data-tool="select">
+  <div class="deskpad" id="deskpad">
+    <div class="empty" id="empty">
+      <div class="dropcard" id="dropcard">
+        <svg width="54" height="54" viewBox="0 0 26 26" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M13 2 L19 12 L13 21 L7 12 Z" fill="#2438c4"/>
+          <circle cx="13" cy="12.5" r="2" fill="#fff"/>
+          <path d="M13 21 L13 24" stroke="#181b22" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <h1>Drop a document to begin</h1>
+        <p>Type anywhere on it, let Inkwell find the blanks for you, and sign it in your own hand. Everything stays on your device.</p>
+        <div class="fmts">PDF · PNG · JPG · DOCX</div>
+        <div class="actions">
+          <button class="btn primary" id="chooseBtn">Choose a file</button>
+          <button class="btn" id="sampleBtn">Try a sample form</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Signature modal -->
+<div class="veil" id="sigVeil" role="dialog" aria-modal="true" aria-label="Create signature">
+  <div class="modal">
+    <header>
+      <h2>Your signature</h2>
+      <button class="mclose" id="sigClose" aria-label="Close">✕</button>
+    </header>
+    <div class="mtabs">
+      <button class="mtab on" data-pane="draw">Draw</button>
+      <button class="mtab" data-pane="type">Type</button>
+    </div>
+    <div class="mbody">
+      <div id="drawPane">
+        <div class="sigwrap">
+          <canvas id="sigPad" width="1200" height="400"></canvas>
+          <div class="sigline"></div>
+          <div class="sighint">Sign above the line</div>
+        </div>
+      </div>
+      <div id="typePane">
+        <input type="text" id="typeName" placeholder="Type your full name" autocomplete="name">
+        <div class="fontopts" id="fontOpts"></div>
+      </div>
+      <div class="mrow">
+        <div class="inkpick">
+          <span>Ink</span>
+          <button class="inkdot blue on" data-ink="#2438c4" aria-label="Blue ink"></button>
+          <button class="inkdot black" data-ink="#181b22" aria-label="Black ink"></button>
+        </div>
+        <button class="btn" id="sigClear">Clear</button>
+        <button class="btn primary" id="sigSave">Use signature</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+<input type="file" class="hiddenfile" id="fileInput" accept=".pdf,.png,.jpg,.jpeg,.docx,application/pdf,image/png,image/jpeg,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+<div id="docxStage" aria-hidden="true"></div>
+<script>
+"use strict";
+/* ================= State ================= */
+const S = {
+  pages: [],            // {canvas, w, h, fields:[], el, overlay, sizer}
+  zoom: 1,
+  tool: "select",
+  selected: null,       // {page, field}
+  signature: null,      // {url, ar, img}
+  idc: 0,
+  name: "",
+  pendingPlace: null,   // {page, x, y} waiting for signature modal
+};
+const $ = (s, r = document) => r.querySelector(s);
+const ws = $("#ws"), deskpad = $("#deskpad"), empty = $("#empty");
+
+if (window.pdfjsLib) {
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+}
+
+function toast(msg) {
+  const t = document.createElement("div");
+  t.className = "toast";
+  t.innerHTML = '<span class="tdot"></span>' + msg;
+  $("#toasts").appendChild(t);
+  setTimeout(() => { t.style.opacity = "0"; t.style.transition = "opacity .3s"; }, 2600);
+  setTimeout(() => t.remove(), 3000);
+}
+
+/* ================= File intake ================= */
+$("#chooseBtn").addEventListener("click", () => $("#fileInput").click());
+$("#newBtn").addEventListener("click", () => location.reload());
+$("#fileInput").addEventListener("change", e => { if (e.target.files[0]) openFile(e.target.files[0]); });
+
+["dragover", "dragenter"].forEach(ev => ws.addEventListener(ev, e => { e.preventDefault(); ws.classList.add("dragging"); }));
+["dragleave", "drop"].forEach(ev => ws.addEventListener(ev, e => { e.preventDefault(); if (ev === "drop" || e.target === ws) ws.classList.remove("dragging"); }));
+ws.addEventListener("drop", e => { const f = e.dataTransfer.files[0]; if (f) openFile(f); });
+
+async function openFile(file) {
+  const ext = file.name.split(".").pop().toLowerCase();
+  try {
+    toast("Opening " + file.name + "…");
+    if (ext === "pdf") await loadPdf(file);
+    else if (ext === "png" || ext === "jpg" || ext === "jpeg") await loadImage(file);
+    else if (ext === "docx") await loadDocx(file);
+    else return toast("Unsupported format — use PDF, PNG, JPG or DOCX");
+    S.name = file.name;
+    mountDocument();
+  } catch (err) {
+    console.error(err);
+    toast("Could not open that file — it may be corrupted or protected");
+  }
+}
+
+async function loadPdf(file) {
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  S.pages = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const vp = page.getViewport({ scale: 1.6 });
+    const c = document.createElement("canvas");
+    c.width = Math.floor(vp.width); c.height = Math.floor(vp.height);
+    await page.render({ canvasContext: c.getContext("2d"), viewport: vp }).promise;
+    S.pages.push(newPage(c));
+  }
+}
+
+function loadImage(file) {
+  return new Promise((res, rej) => {
+    const img = new Image();
+    img.onload = () => {
+      const maxW = 1400, sc = Math.min(1, maxW / img.width);
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * sc); c.height = Math.round(img.height * sc);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(img.src);
+      S.pages = [newPage(c)];
+      res();
+    };
+    img.onerror = rej;
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+async function loadDocx(file) {
+  const buf = await file.arrayBuffer();
+  const { value: html } = await mammoth.convertToHtml({ arrayBuffer: buf });
+  const stage = $("#docxStage");
+  stage.innerHTML = html || "<p>(empty document)</p>";
+  const full = await html2canvas(stage, { scale: 1.6, backgroundColor: "#ffffff", logging: false });
+  stage.innerHTML = "";
+  // Slice the long render into A4-proportioned pages
+  const pageW = full.width, pageH = Math.round(pageW * 1.4142);
+  S.pages = [];
+  for (let y = 0; y < full.height; y += pageH) {
+    const c = document.createElement("canvas");
+    c.width = pageW; c.height = pageH;
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, pageW, pageH);
+    ctx.drawImage(full, 0, y, pageW, Math.min(pageH, full.height - y), 0, 0, pageW, Math.min(pageH, full.height - y));
+    S.pages.push(newPage(c));
+  }
+  toast("Word layout is approximate — complex formatting may shift");
+}
+
+function newPage(canvas) {
+  return { canvas, w: canvas.width, h: canvas.height, fields: [] };
+}
+
+/* ================= Sample form (demo) ================= */
+$("#sampleBtn").addEventListener("click", () => {
+  const c = document.createElement("canvas");
+  c.width = 1120; c.height = 1450;
+  const x = c.getContext("2d");
+  x.fillStyle = "#fff"; x.fillRect(0, 0, c.width, c.height);
+  x.fillStyle = "#181b22";
+  x.font = "700 40px Georgia, serif";
+  x.fillText("Consulting Engagement Form", 90, 140);
+  x.fillStyle = "#666"; x.font = "22px Georgia, serif";
+  x.fillText("Please complete all fields and sign at the bottom.", 90, 185);
+  x.strokeStyle = "#181b22"; x.lineWidth = 2;
+  const rows = [
+    ["Full name", 300], ["Company", 400], ["Title / Role", 500],
+    ["Email address", 600], ["Phone", 700], ["Engagement start date", 800],
+  ];
+  x.fillStyle = "#181b22"; x.font = "24px Georgia, serif";
+  rows.forEach(([label, y]) => {
+    x.fillText(label + ":", 90, y);
+    x.beginPath(); x.moveTo(360, y + 6); x.lineTo(1020, y + 6); x.stroke();
+  });
+  x.fillText("Scope notes:", 90, 900);
+  [960, 1030].forEach(y => { x.beginPath(); x.moveTo(90, y); x.lineTo(1020, y); x.stroke(); });
+  x.fillText("Signature:", 90, 1240);
+  x.beginPath(); x.moveTo(280, 1246); x.lineTo(700, 1246); x.stroke();
+  x.fillText("Date:", 760, 1240);
+  x.beginPath(); x.moveTo(840, 1246); x.lineTo(1020, 1246); x.stroke();
+  S.pages = [newPage(c)];
+  S.name = "sample-engagement-form";
+  mountDocument();
+  toast("Sample loaded — try “Detect fields”");
+});
+
+/* ================= Mounting & zoom ================= */
+function mountDocument() {
+  empty.hidden = true;
+  deskpad.querySelectorAll(".pageSizer").forEach(n => n.remove());
+  S.pages.forEach((p, i) => {
+    const sizer = document.createElement("div");
+    sizer.className = "pageSizer";
+    const pageEl = document.createElement("div");
+    pageEl.className = "page";
+    pageEl.style.width = p.w + "px"; pageEl.style.height = p.h + "px";
+    p.canvas.className = "base";
+    const overlay = document.createElement("div");
+    overlay.className = "overlay";
+    const no = document.createElement("div");
+    no.className = "pageno";
+    no.textContent = "PAGE " + (i + 1) + " / " + S.pages.length;
+    pageEl.append(p.canvas, overlay, no);
+    sizer.appendChild(pageEl);
+    deskpad.appendChild(sizer);
+    p.el = pageEl; p.overlay = overlay; p.sizer = sizer;
+    overlay.addEventListener("pointerdown", e => onOverlayDown(e, p));
+  });
+  $("#fileTag").hidden = false;
+  $("#fileName").textContent = S.name;
+  $("#fileMeta").textContent = "· " + S.pages.length + (S.pages.length > 1 ? " pages" : " page");
+  ["newBtn", "pngBtn", "pdfBtn"].forEach(id => $("#" + id).hidden = false);
+  fitWidth();
+}
+
+function applyZoom() {
+  S.pages.forEach(p => {
+    p.sizer.style.width = p.w * S.zoom + "px";
+    p.sizer.style.height = p.h * S.zoom + "px";
+    p.el.style.transform = "scale(" + S.zoom + ")";
+  });
+  $("#zoomVal").textContent = Math.round(S.zoom * 100) + "%";
+}
+function setZoom(z) { S.zoom = Math.min(3, Math.max(.25, z)); applyZoom(); }
+function fitWidth() {
+  if (!S.pages.length) return;
+  const avail = ws.clientWidth - 96;
+  setZoom(Math.min(1.25, avail / Math.max(...S.pages.map(p => p.w))));
+}
+$("#zoomIn").addEventListener("click", () => setZoom(S.zoom + .1));
+$("#zoomOut").addEventListener("click", () => setZoom(S.zoom - .1));
+$("#zoomFit").addEventListener("click", fitWidth);
+window.addEventListener("resize", () => { if (S.pages.length) fitWidth(); });
+
+/* ================= Tools ================= */
+function setTool(t) {
+  S.tool = t;
+  ws.dataset.tool = t;
+  document.querySelectorAll(".tool[data-tool]").forEach(b =>
+    b.classList.toggle("on", b.dataset.tool === t && t !== "detect"));
+}
+document.querySelectorAll(".tool[data-tool]").forEach(b =>
+  b.addEventListener("click", () => {
+    if (b.dataset.tool === "detect") return runDetect();
+    if (b.dataset.tool === "sign" && S.tool === "sign") return openSigModal(); // re-click = new signature
+    setTool(b.dataset.tool);
+  }));
+document.addEventListener("keydown", e => {
+  if (e.target.isContentEditable || /INPUT|TEXTAREA/.test(e.target.tagName)) return;
+  const k = e.key.toLowerCase();
+  if (k === "v") setTool("select");
+  else if (k === "t") setTool("text");
+  else if (k === "s") setTool("sign");
+  else if (k === "d") runDetect();
+  else if (k === "escape") { select(null); if (S.tool === "place") setTool("select"); }
+  else if ((k === "delete" || k === "backspace") && S.selected) { e.preventDefault(); removeField(S.selected.page, S.selected.field); }
+});
+
+/* ================= Fields ================= */
+function pagePoint(e, p) {
+  const r = p.overlay.getBoundingClientRect();
+  return { x: (e.clientX - r.left) / S.zoom, y: (e.clientY - r.top) / S.zoom };
+}
+
+function onOverlayDown(e, p) {
+  if (e.target !== p.overlay) return;           // clicks on fields handled by field
+  const pt = pagePoint(e, p);
+  if (S.tool === "text") {
+    const f = addTextField(p, pt.x - 4, pt.y - 14, 220);
+    select({ page: p, field: f });
+    startEditing(f);
+  } else if (S.tool === "sign" || S.tool === "place") {
+    if (S.signature) placeSignature(p, pt.x, pt.y);
+    else { S.pendingPlace = { page: p, x: pt.x, y: pt.y }; openSigModal(); }
+    if (S.tool === "place") setTool("select");
+  } else {
+    select(null);
+  }
+}
+
+function addTextField(p, x, y, w, opts = {}) {
+  const f = {
+    id: ++S.idc, kind: "text", x, y, w, h: opts.h || 30,
+    size: opts.size || 16, color: opts.color || "#181b22",
+    text: "", detected: !!opts.detected,
+  };
+  p.fields.push(f);
+  mountTextField(p, f);
+  return f;
+}
+
+function mountTextField(p, f) {
+  const el = document.createElement("div");
+  el.className = "field text" + (f.detected ? " detected" : "");
+  el.style.left = f.x + "px"; el.style.top = f.y + "px";
+  el.style.width = f.w + "px"; el.style.minHeight = f.h + "px";
+  const fx = document.createElement("div");
+  fx.className = "fx"; fx.contentEditable = "true"; fx.spellcheck = false;
+  fx.dataset.ph = f.detected ? "Fill in" : "Type here";
+  fx.style.fontSize = f.size + "px"; fx.style.color = f.color;
+  fx.addEventListener("input", () => {
+    f.text = fx.innerText;
+    if (f.detected && f.text.trim()) { f.detected = false; el.classList.remove("detected"); }
+  });
+  fx.addEventListener("blur", () => stopEditing(f));
+  const bar = document.createElement("div");
+  bar.className = "fbar";
+  bar.innerHTML =
+    '<button data-a="s-" title="Smaller text">A−</button>' +
+    '<button data-a="s+" title="Larger text">A+</button>' +
+    '<button data-a="blue" title="Blue ink"><span class="sw blue"></span></button>' +
+    '<button data-a="black" title="Black ink"><span class="sw black"></span></button>';
+  bar.addEventListener("pointerdown", e => { e.stopPropagation(); e.preventDefault(); });
+  bar.addEventListener("click", e => {
+    const a = e.target.closest("button")?.dataset.a; if (!a) return;
+    if (a === "s-") f.size = Math.max(9, f.size - 2);
+    if (a === "s+") f.size = Math.min(72, f.size + 2);
+    if (a === "blue") f.color = "#2438c4";
+    if (a === "black") f.color = "#181b22";
+    fx.style.fontSize = f.size + "px"; fx.style.color = f.color;
+  });
+  const del = mkDelete(p, f);
+  el.append(fx, bar, del);
+  wireFieldPointer(el, p, f);
+  el.addEventListener("dblclick", () => { select({ page: p, field: f }); startEditing(f); });
+  f.el = el; f.fx = fx;
+  p.overlay.appendChild(el);
+}
+
+function startEditing(f) {
+  if (f.kind !== "text") return;
+  f.el.classList.add("editing");
+  f.fx.focus();
+  const sel = window.getSelection(), rg = document.createRange();
+  rg.selectNodeContents(f.fx); rg.collapse(false); sel.removeAllRanges(); sel.addRange(rg);
+}
+function stopEditing(f) { f.el && f.el.classList.remove("editing"); }
+
+function placeSignature(p, cx, cy) {
+  const w = Math.min(240, p.w * .4), h = w / S.signature.ar;
+  const f = {
+    id: ++S.idc, kind: "sig", x: cx - w / 2, y: cy - h / 2, w, h, url: S.signature.url,
+  };
+  p.fields.push(f);
+  mountSigField(p, f);
+  select({ page: p, field: f });
+}
+
+function mountSigField(p, f) {
+  const el = document.createElement("div");
+  el.className = "field sig";
+  el.style.left = f.x + "px"; el.style.top = f.y + "px";
+  el.style.width = f.w + "px"; el.style.height = f.h + "px";
+  const img = document.createElement("img");
+  img.src = f.url; img.alt = "Signature"; img.draggable = false;
+  const rz = document.createElement("div");
+  rz.className = "rz";
+  rz.addEventListener("pointerdown", e => {
+    e.stopPropagation(); e.preventDefault();
+    const start = { x: e.clientX, w: f.w };
+    const ar = f.w / f.h;
+    const move = ev => {
+      const nw = Math.max(50, start.w + (ev.clientX - start.x) / S.zoom);
+      f.w = nw; f.h = nw / ar;
+      el.style.width = f.w + "px"; el.style.height = f.h + "px";
+    };
+    const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
+    window.addEventListener("pointermove", move); window.addEventListener("pointerup", up);
+  });
+  el.append(img, rz, mkDelete(p, f));
+  wireFieldPointer(el, p, f);
+  f.el = el;
+  p.overlay.appendChild(el);
+}
+
+function mkDelete(p, f) {
+  const d = document.createElement("button");
+  d.className = "fdel"; d.title = "Remove"; d.textContent = "✕";
+  d.addEventListener("pointerdown", e => e.stopPropagation());
+  d.addEventListener("click", () => removeField(p, f));
+  return d;
+}
+
+function removeField(p, f) {
+  p.fields = p.fields.filter(x => x !== f);
+  f.el.remove();
+  if (S.selected && S.selected.field === f) S.selected = null;
+}
+
+function select(sel) {
+  if (S.selected) { S.selected.field.el.classList.remove("sel"); stopEditing(S.selected.field); }
+  S.selected = sel;
+  if (sel) sel.field.el.classList.add("sel");
+}
+
+function wireFieldPointer(el, p, f) {
+  el.addEventListener("pointerdown", e => {
+    if (el.classList.contains("editing")) return;
+    e.preventDefault(); e.stopPropagation();
+    select({ page: p, field: f });
+    const start = { x: e.clientX, y: e.clientY, fx: f.x, fy: f.y };
+    let moved = false;
+    el.classList.add("dragging");
+    const move = ev => {
+      const dx = (ev.clientX - start.x) / S.zoom, dy = (ev.clientY - start.y) / S.zoom;
+      if (Math.abs(dx) + Math.abs(dy) > 2) moved = true;
+      f.x = Math.min(p.w - 20, Math.max(-f.w + 20, start.fx + dx));
+      f.y = Math.min(p.h - 14, Math.max(-8, start.fy + dy));
+      el.style.left = f.x + "px"; el.style.top = f.y + "px";
+    };
+    const up = () => {
+      el.classList.remove("dragging");
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      if (!moved && f.kind === "text") startEditing(f);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  });
+}
+
+/* ================= Auto-detect blanks ================= */
+function runDetect() {
+  if (!S.pages.length) return toast("Open a document first");
+  let total = 0;
+  S.pages.forEach(p => { total += detectPage(p); });
+  toast(total ? "Found " + total + " blank field" + (total > 1 ? "s" : "") + " — click any to fill"
+              : "No underlined blanks found on this document");
+}
+
+function detectPage(p) {
+  const ctx = p.canvas.getContext("2d", { willReadFrequently: true });
+  const { data } = ctx.getImageData(0, 0, p.w, p.h);
+  const W = p.w, H = p.h;
+  const dark = (x, y) => {
+    const i = (y * W + x) * 4;
+    return (data[i] * .299 + data[i + 1] * .587 + data[i + 2] * .114) < 128 && data[i + 3] > 40;
+  };
+  const minRun = Math.max(60, W * .05), maxRun = W * .92;
+  const raw = [];
+  for (let y = 8; y < H - 4; y += 2) {
+    let x = 4;
+    while (x < W - 4) {
+      if (!dark(x, y)) { x++; continue; }
+      let x0 = x, gap = 0;
+      while (x < W - 4 && gap <= 3) { if (dark(x, y)) { gap = 0; } else gap++; x++; }
+      const x1 = x - gap, len = x1 - x0;
+      if (len >= minRun && len <= maxRun) raw.push({ x0, x1, y });
+    }
+  }
+  // merge thick lines (adjacent scan rows on the same segment)
+  const lines = [];
+  raw.forEach(r => {
+    const m = lines.find(l => Math.abs(l.y - r.y) <= 5 &&
+      Math.min(l.x1, r.x1) - Math.max(l.x0, r.x0) > (r.x1 - r.x0) * .6);
+    if (m) { m.x0 = Math.min(m.x0, r.x0); m.x1 = Math.max(m.x1, r.x1); m.y = Math.max(m.y, r.y); }
+    else lines.push({ ...r });
+  });
+  // keep only underlines with clear space above (a blank to write in)
+  const fieldH = Math.round(Math.max(26, Math.min(44, p.h * .03)));
+  let count = 0;
+  lines.forEach(l => {
+    let darkAbove = 0, samples = 0;
+    for (let y = l.y - 8; y > l.y - fieldH && y > 0; y -= 2)
+      for (let x = l.x0 + 4; x < l.x1 - 4; x += 6) { samples++; if (dark(x, y)) darkAbove++; }
+    if (!samples || darkAbove / samples > .02) return;
+    const fx = l.x0, fy = l.y - fieldH - 2, fw = l.x1 - l.x0;
+    const clash = p.fields.some(f =>
+      fx < f.x + f.w && fx + fw > f.x && fy < f.y + f.h + 6 && fy + fieldH > f.y - 6);
+    if (clash) return;
+    addTextField(p, fx, fy, fw, { detected: true, h: fieldH, size: Math.round(fieldH * .52) });
+    count++;
+  });
+  return count;
+}
+
+/* ================= Signature modal ================= */
+const veil = $("#sigVeil"), pad = $("#sigPad"), pctx = pad.getContext("2d");
+let sigInk = "#2438c4", sigMode = "draw", drawing = false, last = null, strokes = 0;
+const SIG_FONTS = [
+  '46px "Segoe Script","Savoye LET","Snell Roundhand",cursive',
+  '46px "Brush Script MT","Lucida Handwriting",cursive',
+  'italic 600 42px Georgia,"Times New Roman",serif',
+];
+let sigFontIdx = 0;
+
+function openSigModal() {
+  veil.classList.add("open");
+  clearPad();
+  renderTypePreviews();
+}
+function closeSigModal() { veil.classList.remove("open"); S.pendingPlace = null; }
+$("#sigClose").addEventListener("click", closeSigModal);
+veil.addEventListener("pointerdown", e => { if (e.target === veil) closeSigModal(); });
+
+document.querySelectorAll(".mtab").forEach(t => t.addEventListener("click", () => {
+  document.querySelectorAll(".mtab").forEach(x => x.classList.toggle("on", x === t));
+  sigMode = t.dataset.pane;
+  $("#drawPane").style.display = sigMode === "draw" ? "block" : "none";
+  $("#typePane").style.display = sigMode === "type" ? "block" : "none";
+  if (sigMode === "type") { renderTypePreviews(); $("#typeName").focus(); }
+}));
+
+document.querySelectorAll(".inkdot").forEach(d => d.addEventListener("click", () => {
+  document.querySelectorAll(".inkdot").forEach(x => x.classList.toggle("on", x === d));
+  sigInk = d.dataset.ink;
+  renderTypePreviews();
+}));
+
+function padPos(e) {
+  const r = pad.getBoundingClientRect();
+  return { x: (e.clientX - r.left) * (pad.width / r.width), y: (e.clientY - r.top) * (pad.height / r.height) };
+}
+pad.addEventListener("pointerdown", e => {
+  e.preventDefault(); pad.setPointerCapture(e.pointerId);
+  drawing = true; last = padPos(e); strokes++;
+  pctx.beginPath(); pctx.arc(last.x, last.y, 2.2, 0, 7); pctx.fillStyle = sigInk; pctx.fill();
+});
+pad.addEventListener("pointermove", e => {
+  if (!drawing) return;
+  const pt = padPos(e);
+  pctx.strokeStyle = sigInk; pctx.lineWidth = 4.4; pctx.lineCap = "round"; pctx.lineJoin = "round";
+  pctx.beginPath();
+  pctx.moveTo(last.x, last.y);
+  pctx.quadraticCurveTo(last.x, last.y, (last.x + pt.x) / 2, (last.y + pt.y) / 2);
+  pctx.lineTo(pt.x, pt.y);
+  pctx.stroke();
+  last = pt;
+});
+["pointerup", "pointercancel"].forEach(ev => pad.addEventListener(ev, () => drawing = false));
+function clearPad() { pctx.clearRect(0, 0, pad.width, pad.height); strokes = 0; }
+$("#sigClear").addEventListener("click", () => { clearPad(); $("#typeName").value = ""; renderTypePreviews(); });
+
+function renderTypePreviews() {
+  const name = $("#typeName").value.trim() || "Your Name";
+  const box = $("#fontOpts");
+  box.innerHTML = "";
+  SIG_FONTS.forEach((f, i) => {
+    const b = document.createElement("button");
+    b.className = "fontopt" + (i === sigFontIdx ? " on" : "");
+    b.style.font = f.replace(/^(italic 600 )?4?\d+px/, m => m.replace(/4?\d+px/, "26px"));
+    b.style.color = sigInk;
+    b.textContent = name;
+    b.addEventListener("click", () => { sigFontIdx = i; renderTypePreviews(); });
+    box.appendChild(b);
+  });
+}
+$("#typeName").addEventListener("input", renderTypePreviews);
+
+function trimCanvas(c) {
+  const ctx = c.getContext("2d");
+  const { data } = ctx.getImageData(0, 0, c.width, c.height);
+  let minX = c.width, minY = c.height, maxX = 0, maxY = 0;
+  for (let y = 0; y < c.height; y++) for (let x = 0; x < c.width; x++)
+    if (data[(y * c.width + x) * 4 + 3] > 10) {
+      if (x < minX) minX = x; if (x > maxX) maxX = x;
+      if (y < minY) minY = y; if (y > maxY) maxY = y;
+    }
+  if (maxX <= minX) return null;
+  const pd = 12, o = document.createElement("canvas");
+  o.width = maxX - minX + pd * 2; o.height = maxY - minY + pd * 2;
+  o.getContext("2d").drawImage(c, minX - pd, minY - pd, o.width, o.height, 0, 0, o.width, o.height);
+  return o;
+}
+
+$("#sigSave").addEventListener("click", () => {
+  let src = null;
+  if (sigMode === "draw") {
+    if (!strokes) return toast("Draw your signature first");
+    src = trimCanvas(pad);
+  } else {
+    const name = $("#typeName").value.trim();
+    if (!name) return toast("Type your name first");
+    const c = document.createElement("canvas");
+    c.width = 1000; c.height = 260;
+    const x = c.getContext("2d");
+    x.font = SIG_FONTS[sigFontIdx]; x.fillStyle = sigInk;
+    x.textBaseline = "middle";
+    x.font = SIG_FONTS[sigFontIdx].replace(/4?\d+px/, "84px");
+    const w = x.measureText(name).width;
+    if (w > 940) x.font = SIG_FONTS[sigFontIdx].replace(/4?\d+px/, Math.floor(84 * 940 / w) + "px");
+    x.fillText(name, 30, 130);
+    src = trimCanvas(c);
+  }
+  if (!src) return toast("Signature looks empty — try again");
+  const url = src.toDataURL("image/png");
+  const img = new Image(); img.src = url;
+  S.signature = { url, ar: src.width / src.height, img };
+  const pending = S.pendingPlace;
+  veil.classList.remove("open");
+  S.pendingPlace = null;
+  if (pending) placeSignature(pending.page, pending.x, pending.y);
+  else { setTool("place"); toast("Click on the document to place your signature"); }
+});
+
+/* ================= Export ================= */
+function flattenPage(p) {
+  const c = document.createElement("canvas");
+  c.width = p.w; c.height = p.h;
+  const x = c.getContext("2d");
+  x.drawImage(p.canvas, 0, 0);
+  p.fields.forEach(f => {
+    if (f.kind === "sig") {
+      const im = new Image(); im.src = f.url;                 // data URLs decode synchronously enough,
+      try { x.drawImage(f.el.querySelector("img"), f.x, f.y, f.w, f.h); }  // but prefer the live element
+      catch (e) { x.drawImage(im, f.x, f.y, f.w, f.h); }
+    } else if (f.kind === "text" && f.text && f.text.trim()) {
+      x.fillStyle = f.color;
+      x.font = f.size + 'px -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Roboto,Arial,sans-serif';
+      x.textBaseline = "alphabetic";
+      const lh = f.size * 1.35;
+      f.text.split("\n").forEach((ln, i) => x.fillText(ln, f.x + 4, f.y + 3 + f.size + i * lh));
+    }
+  });
+  return c;
+}
+
+$("#pdfBtn").addEventListener("click", () => {
+  if (!S.pages.length) return;
+  select(null);
+  const { jsPDF } = window.jspdf;
+  const first = S.pages[0];
+  const doc = new jsPDF({
+    orientation: first.w > first.h ? "l" : "p",
+    unit: "px", format: [first.w, first.h], hotfixes: ["px_scaling"],
+  });
+  S.pages.forEach((p, i) => {
+    if (i > 0) doc.addPage([p.w, p.h], p.w > p.h ? "l" : "p");
+    doc.addImage(flattenPage(p).toDataURL("image/jpeg", .92), "JPEG", 0, 0, p.w, p.h);
+  });
+  doc.save((S.name.replace(/\.[^.]+$/, "") || "document") + "-signed.pdf");
+  toast("PDF downloaded");
+});
+
+$("#pngBtn").addEventListener("click", () => {
+  if (!S.pages.length) return;
+  select(null);
+  S.pages.forEach((p, i) => {
+    const a = document.createElement("a");
+    a.href = flattenPage(p).toDataURL("image/png");
+    a.download = (S.name.replace(/\.[^.]+$/, "") || "document") + "-page" + (i + 1) + ".png";
+    a.click();
+  });
+  toast("PNG " + (S.pages.length > 1 ? "files" : "file") + " downloaded");
+});
+</script>
+</body>
+</html>
